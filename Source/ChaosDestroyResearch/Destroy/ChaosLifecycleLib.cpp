@@ -1,6 +1,6 @@
 #include "ChaosLifecycleLib.h"
 
-// [UE 5.4 헤더 설정 성공]
+// [기본 헤더]
 #include "GeometryCollection/GeometryCollectionComponent.h"
 #include "Engine/World.h"
 #include "Physics/Experimental/PhysScene_Chaos.h" 
@@ -9,68 +9,62 @@
 #include "PBDRigidsSolver.h"
 #include "Chaos/ParticleHandle.h"
 
+// [프록시]
+#include "PhysicsProxy/GeometryCollectionPhysicsProxy.h" // UE 5.4 경로
+
 void UChaosLifecycleLib::ApplyAdaptiveLifecycle(
 	UGeometryCollectionComponent* GC_Component,
 	float SleepThreshold,
 	float DampingThreshold,
 	float DampingStrength)
 {
-	// 1. 유효성 검사
 	if (!GC_Component) return;
 
-	// 2. 월드 & 물리 씬
-	UWorld* World = GC_Component->GetWorld();
-	if (!World) return;
+	// 1. 프록시 가져오기
+	FGeometryCollectionPhysicsProxy* Proxy = static_cast<FGeometryCollectionPhysicsProxy*>(GC_Component->GetPhysicsProxy());
+	if (!Proxy) return;
 
-	FPhysScene* PhysScene = World->GetPhysicsScene();
-	if (!PhysScene) return;
-
-	auto* ChaosScene = static_cast<FPhysScene_Chaos*>(PhysScene);
-	if (!ChaosScene) return;
-
-	auto* Solver = ChaosScene->GetSolver();
+	// 2. [수정 1] 솔버 가져오기 (템플릿 타입 명시 필수!)
+	// UE 5.4에서는 어떤 솔버인지 <> 안에 알려줘야 합니다.
+	auto* Solver = Proxy->GetSolver<Chaos::FPBDRigidsSolver>();
 	if (!Solver) return;
 
-	// [수정] 락(Lock) 제거
-	// UE 5.4에서는 GetExternalDataLock_GameThread 함수가 변경/제거되었습니다.
-	// 간단한 파라미터 변경은 락 없이 수행해도 엔진이 다음 틱에 반영하도록 처리합니다.
-	// (컴파일 에러를 피하기 위해 락 부분만 생략합니다.)
+	// 3. [수정 2] 내 파편들만 가져오기 (auto& 사용)
+	// ClusteredParticle이라는 복잡한 타입이라서, auto로 받는 게 가장 안전합니다.
+	const auto& MyParticles = Proxy->GetSolverParticleHandles();
 
-	// 3. 파티클 순회 준비
-	auto* Evolution = Solver->GetEvolution();
-	if (!Evolution) return;
-
-	// UE 5.4용 뷰(View)
-	auto& DynamicParticles = Evolution->GetParticles().GetNonDisabledView();
-
-	for (auto& Handle : DynamicParticles)
+	// 4. 파편 순회
+	for (auto* Handle : MyParticles)
 	{
-		// RigidHandle로 변환
-		auto* RigidHandle = Handle.CastToRigidParticle();
-		if (!RigidHandle) continue;
+		if (!Handle) continue;
 
-		if (RigidHandle->Sleeping() || RigidHandle->ObjectState() != Chaos::EObjectStateType::Dynamic)
+		// Clustered 파티클도 Rigid 파티클의 기능을 다 가지고 있습니다.
+		// 따라서 바로 함수를 써도 되고, 확실히 하려면 Cast를 해도 됩니다.
+		// 여기서는 auto Handle 자체가 이미 구체적인 타입이므로 바로 씁니다.
+
+		if (Handle->Disabled()) continue;
+		if (Handle->Sleeping() || Handle->ObjectState() != Chaos::EObjectStateType::Dynamic)
 		{
 			continue;
 		}
 
-		// [UE 5.4] V() -> GetV()
-		float LinearSpeed = RigidHandle->GetV().Size();
+		// [UE 5.4] 속도 측정
+		float LinearSpeed = Handle->GetV().Size();
 
-		// [UE 5.4] SetLinearEtherDrag / SetAngularEtherDrag
+		// [로직 적용]
 		if (LinearSpeed < SleepThreshold)
 		{
-			RigidHandle->SetSleeping(true);
+			Handle->SetSleeping(true);
 		}
 		else if (LinearSpeed < DampingThreshold)
 		{
-			RigidHandle->SetLinearEtherDrag(DampingStrength);
-			RigidHandle->SetAngularEtherDrag(DampingStrength);
+			Handle->SetLinearEtherDrag(DampingStrength);
+			Handle->SetAngularEtherDrag(DampingStrength);
 		}
 		else
 		{
-			RigidHandle->SetLinearEtherDrag(0.05f);
-			RigidHandle->SetAngularEtherDrag(0.05f);
+			Handle->SetLinearEtherDrag(0.05f);
+			Handle->SetAngularEtherDrag(0.05f);
 		}
 	}
 }
