@@ -16,12 +16,12 @@ public class ChaosDestroyResearch : ModuleRules
             "InputCore",
             "EnhancedInput",
 
-			// [물리 필수 모듈 5총사]
+			// [물리 필수 모듈]
 			"GeometryCollectionEngine",
             "Chaos",
             "ChaosSolverEngine",
             "PhysicsCore",
-            "ChaosCore" // <--- 이거 하나 추가해주세요!
+            "ChaosCore"
 		});
 
         PrivateDependencyModuleNames.AddRange(new string[] { });
